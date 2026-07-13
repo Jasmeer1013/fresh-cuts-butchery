@@ -78,7 +78,13 @@ const CHICKEN_CUTS = [
 // High-performance image element with CSS fallback
 const ChickenImage = ({ src, alt, className }) => {
   const [error, setError] = useState(false);
-  if (error || !src) {
+  const resolvedSrc = src
+    ? src.startsWith("http")
+      ? src
+      : `${import.meta.env.BASE_URL || "/"}${src.startsWith("/") ? src.slice(1) : src}`
+    : "";
+
+  if (error || !resolvedSrc) {
     return (
       <div className={`bg-muted flex flex-col items-center justify-center border border-border/60 ${className} select-none`}>
         <span className="text-primary font-bold text-[10px] uppercase tracking-widest text-center px-1">
@@ -92,7 +98,7 @@ const ChickenImage = ({ src, alt, className }) => {
   }
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       className={className}
       onError={() => setError(true)}
@@ -167,26 +173,91 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
   const jumpVelocity = useRef(0);
   const blinkTimer = useRef(0);
   const isBlinking = useRef(false);
+  
+  // Dynamic idle actions (pecking & feather shaking)
+  const peckingTimer = useRef(0);
+  const isPecking = useRef(false);
+  const shakeTimer = useRef(0);
+  const isShaking = useRef(false);
+  const shakeDuration = useRef(0);
 
   // Smooth cursor look-at point interpolation
   const smoothedLookTarget = useRef(new THREE.Vector3(0, 1.0, 3.5));
 
   useFrame((state, delta) => {
-    // 1. Precise cursor target lock-at
+    const elapsed = state.clock.getElapsedTime();
+    
+    // 1. Precise cursor target lock-at calculation
     const targetX = mouse.current.x * 2.8;
     const targetY = mouse.current.y * 1.8 + 1.0;
 
     smoothedLookTarget.current.x = THREE.MathUtils.lerp(smoothedLookTarget.current.x, targetX, 0.1);
     smoothedLookTarget.current.y = THREE.MathUtils.lerp(smoothedLookTarget.current.y, targetY, 0.1);
 
-    if (headRef.current) {
-      headRef.current.lookAt(smoothedLookTarget.current);
-    }
-    if (groupRef.current) {
+    if (groupRef.current && !isShaking.current) {
       groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetX * 0.12, 0.1);
     }
 
-    // 2. Eye Blinking Logic
+    // 2. Idle Pecking Trigger
+    if (!isJumping && !isShaking.current) {
+      peckingTimer.current += delta;
+      if (peckingTimer.current > 7.0) {
+        if (Math.random() > 0.5) {
+          isPecking.current = true;
+        }
+        peckingTimer.current = 0;
+      }
+    }
+
+    // 3. Idle Shaking Trigger
+    if (!isJumping && !isPecking.current && !isShaking.current) {
+      shakeTimer.current += delta;
+      if (shakeTimer.current > 12.0) {
+        if (Math.random() > 0.5) {
+          isShaking.current = true;
+          shakeDuration.current = 0;
+        }
+        shakeTimer.current = 0;
+      }
+    }
+
+    // 4. Action Movements
+    if (headRef.current) {
+      if (isPecking.current) {
+        // Quick realistic pecking curve
+        headRef.current.position.y = THREE.MathUtils.lerp(headRef.current.position.y, 0.58, 0.22);
+        headRef.current.position.z = THREE.MathUtils.lerp(headRef.current.position.z, 0.45, 0.22);
+        headRef.current.rotation.x = THREE.MathUtils.lerp(headRef.current.rotation.x, 0.95, 0.22);
+        headRef.current.rotation.z = THREE.MathUtils.lerp(headRef.current.rotation.z, 0, 0.22);
+        
+        if (headRef.current.position.y < 0.64) {
+          isPecking.current = false;
+        }
+      } else {
+        // Head looking tracking
+        headRef.current.position.y = THREE.MathUtils.lerp(headRef.current.position.y, 0.95, 0.15);
+        headRef.current.position.z = THREE.MathUtils.lerp(headRef.current.position.z, 0.15, 0.15);
+        
+        headRef.current.lookAt(smoothedLookTarget.current);
+        // Curious bird-like head roll tilt
+        headRef.current.rotation.z = THREE.MathUtils.lerp(headRef.current.rotation.z, targetX * 0.12, 0.1);
+      }
+    }
+
+    // Body shake wiggle
+    if (isShaking.current && groupRef.current && leftWingRef.current && rightWingRef.current) {
+      shakeDuration.current += delta;
+      groupRef.current.rotation.z = Math.sin(elapsed * 45) * 0.15;
+      leftWingRef.current.rotation.z = Math.sin(elapsed * 45) * 0.35;
+      rightWingRef.current.rotation.z = -Math.sin(elapsed * 45) * 0.35;
+
+      if (shakeDuration.current > 0.6) {
+        isShaking.current = false;
+        groupRef.current.rotation.z = 0;
+      }
+    }
+
+    // 5. Eye Blinking Logic
     blinkTimer.current += delta;
     if (blinkTimer.current > 3.0) {
       isBlinking.current = true;
@@ -204,21 +275,18 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
       rightEyeRef.current.scale.y = THREE.MathUtils.lerp(rightEyeRef.current.scale.y, 1.0, 0.25);
     }
 
-    // 3. Wing wiggling / idle flapping
-    const elapsed = state.clock.getElapsedTime();
-    if (leftWingRef.current && rightWingRef.current) {
+    // 6. Wing flapping / idle breathing wiggles
+    if (leftWingRef.current && rightWingRef.current && !isShaking.current) {
       if (isJumping) {
-        // Fast flutter on hop
         leftWingRef.current.rotation.z = 0.15 + Math.sin(elapsed * 25) * 0.5;
         rightWingRef.current.rotation.z = -0.15 - Math.sin(elapsed * 25) * 0.5;
       } else {
-        // Slow breathing sway
         leftWingRef.current.rotation.z = 0.1 + Math.sin(elapsed * 3) * 0.08;
         rightWingRef.current.rotation.z = -0.1 - Math.sin(elapsed * 3) * 0.08;
       }
     }
 
-    // 4. Spring hop physics
+    // 7. Spring hop physics
     if (isJumping) {
       jumpVelocity.current += 1.6 * delta;
       groupRef.current.position.y += jumpVelocity.current;
@@ -242,12 +310,34 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
   });
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} scale={[0.78, 0.78, 0.78]}>
       {/* Chubby Anime Hen Body */}
       <mesh castShadow receiveShadow>
         <sphereGeometry args={[0.9, 32, 32]} />
         <meshStandardMaterial color="#FFF59D" roughness={0.4} flatShading />
       </mesh>
+
+      {/* Neck (makes look-at head tilts look realistic & organic) */}
+      <mesh position={[0, 0.45, 0.05]} rotation={[0.08, 0, 0]}>
+        <cylinderGeometry args={[0.3, 0.46, 0.52, 16]} />
+        <meshStandardMaterial color="#FFF59D" roughness={0.4} flatShading />
+      </mesh>
+
+      {/* Fanned tail feathers (upward-pointing cute details) */}
+      <group position={[0, 0.28, -0.82]} rotation={[0.42, 0, 0]}>
+        <mesh position={[0, 0.1, 0]} castShadow>
+          <boxGeometry args={[0.18, 0.5, 0.08]} />
+          <meshStandardMaterial color="#FFF176" roughness={0.4} />
+        </mesh>
+        <mesh position={[-0.14, 0.04, 0.04]} rotation={[0, 0.25, -0.25]} castShadow>
+          <boxGeometry args={[0.14, 0.42, 0.07]} />
+          <meshStandardMaterial color="#FFF59D" roughness={0.4} />
+        </mesh>
+        <mesh position={[0.14, 0.04, 0.04]} rotation={[0, -0.25, 0.25]} castShadow>
+          <boxGeometry args={[0.14, 0.42, 0.07]} />
+          <meshStandardMaterial color="#FFF59D" roughness={0.4} />
+        </mesh>
+      </group>
 
       {/* Head Group */}
       <group ref={headRef} position={[0, 0.95, 0.15]}>
@@ -256,13 +346,12 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
           <meshStandardMaterial color="#FFF59D" roughness={0.4} flatShading />
         </mesh>
 
-        {/* Left Anime Eye (Black base + White Shiny reflection highlight sphere) */}
+        {/* Left Anime Eye with shiny white highlights */}
         <group position={[-0.24, 0.1, 0.44]}>
           <mesh ref={leftEyeRef} castShadow>
             <sphereGeometry args={[0.085, 16, 16]} />
             <meshStandardMaterial color="#212121" roughness={0.1} />
           </mesh>
-          {/* Highlight reflections */}
           <mesh position={[0.03, 0.03, 0.06]}>
             <sphereGeometry args={[0.026, 8, 8]} />
             <meshStandardMaterial color="#FFFFFF" roughness={0.1} />
@@ -287,6 +376,18 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
           <meshStandardMaterial color="#FF9800" roughness={0.2} />
         </mesh>
 
+        {/* Double Wattles (hanging red throat lobes) */}
+        <group position={[0, -0.22, 0.46]}>
+          <mesh position={[-0.05, 0, 0]}>
+            <sphereGeometry args={[0.07, 16, 16]} />
+            <meshStandardMaterial color="#E53935" roughness={0.4} />
+          </mesh>
+          <mesh position={[0.05, 0, 0]}>
+            <sphereGeometry args={[0.07, 16, 16]} />
+            <meshStandardMaterial color="#E53935" roughness={0.4} />
+          </mesh>
+        </group>
+
         {/* Red Comb */}
         <group position={[0, 0.55, -0.05]}>
           <mesh position={[0, 0.08, 0.08]}>
@@ -304,15 +405,28 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
         </group>
       </group>
 
-      {/* Wings */}
-      <mesh ref={leftWingRef} position={[-0.92, 0.05, 0]} rotation={[0, 0, 0.15]}>
-        <sphereGeometry args={[0.14, 0.36, 0.22]} />
-        <meshStandardMaterial color="#FFF176" roughness={0.4} flatShading />
-      </mesh>
-      <mesh ref={rightWingRef} position={[0.92, 0.05, 0]} rotation={[0, 0, -0.15]}>
-        <sphereGeometry args={[0.14, 0.36, 0.22]} />
-        <meshStandardMaterial color="#FFF176" roughness={0.4} flatShading />
-      </mesh>
+      {/* Layered Wings */}
+      <group ref={leftWingRef} position={[-0.92, 0.06, 0]}>
+        <mesh castShadow>
+          <sphereGeometry args={[0.12, 0.36, 0.22]} />
+          <meshStandardMaterial color="#FFF176" roughness={0.4} flatShading />
+        </mesh>
+        <mesh position={[-0.06, -0.08, -0.06]} rotation={[0, 0, 0.12]}>
+          <sphereGeometry args={[0.09, 0.28, 0.18]} />
+          <meshStandardMaterial color="#FFF59D" roughness={0.4} />
+        </mesh>
+      </group>
+
+      <group ref={rightWingRef} position={[0.92, 0.06, 0]}>
+        <mesh castShadow>
+          <sphereGeometry args={[0.12, 0.36, 0.22]} />
+          <meshStandardMaterial color="#FFF176" roughness={0.4} flatShading />
+        </mesh>
+        <mesh position={[0.06, -0.08, -0.06]} rotation={[0, 0, -0.12]}>
+          <sphereGeometry args={[0.09, 0.28, 0.18]} />
+          <meshStandardMaterial color="#FFF59D" roughness={0.4} />
+        </mesh>
+      </group>
 
       {/* Feet */}
       <group position={[0, -0.85, 0]}>
@@ -329,7 +443,7 @@ const CuteChicken3D = ({ mouse, isJumping, onJumpEnd }) => {
   );
 };
 
-// Canvas Wrapper with WebGL detection
+// Canvas Wrapper with WebGL detection and soft shadows
 const ThreeChickenWrapper = () => {
   const [hasWebGL, setHasWebGL] = useState(true);
   const [isJumping, setIsJumping] = useState(false);
@@ -362,12 +476,12 @@ const ThreeChickenWrapper = () => {
 
   return (
     <div 
-      className="w-56 h-56 mx-auto cursor-pointer relative"
+      className="w-64 h-64 mx-auto cursor-pointer relative"
       onClick={handleHop}
     >
-      <Canvas shadows camera={{ position: [0, 0.3, 3.8], fov: 40 }}>
+      <Canvas shadows camera={{ position: [0, 0.5, 4.4], fov: 34 }}>
         <ambientLight intensity={1.5} />
-        <directionalLight position={[3, 5, 4]} intensity={2.0} castShadow />
+        <directionalLight position={[3, 5, 4]} intensity={2.2} castShadow />
         <CuteChicken3D mouse={mouse} isJumping={isJumping} onJumpEnd={() => setIsJumping(false)} />
       </Canvas>
       <div className="absolute bottom-0 left-0 right-0 text-center text-[10px] text-foreground/45 uppercase tracking-widest font-bold pointer-events-none select-none">
@@ -515,7 +629,8 @@ export default function App() {
     return {
       shopName: "FRESH CUTS",
       shopAddress: "Downtown Market Row",
-      razorpayKey: "rzp_test_hD190aI77rR0G5" // Default test key
+      razorpayKey: "rzp_test_hD190aI77rR0G5", // Default test key
+      razorpaySecret: ""
     };
   });
 
@@ -608,6 +723,40 @@ export default function App() {
     // Sanitize phone number: strip non-digits to avoid Razorpay prefill validation crashes
     const cleanPhone = customerInfo.phone.replace(/\D/g, "");
 
+    let orderId = null;
+
+    // Securely fetch order ID from backend if a secret key exists (production or secure test mode)
+    if (merchantSettings.razorpaySecret) {
+      try {
+        const response = await fetch("/api/create-order", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            amount: Math.round(totalPrice * 100), // in paise
+            keyId: merchantSettings.razorpayKey,
+            keySecret: merchantSettings.razorpaySecret
+          })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to create payment order on backend");
+        }
+        orderId = data.orderId;
+      } catch (err) {
+        console.error("Order creation failed on server:", err);
+        alert(
+          "Payment Initialization Failed:\n" +
+            err.message +
+            "\n\nPlease verify your Razorpay API credentials in the Admin Dashboard Settings."
+        );
+        setIsProcessing(false);
+        return;
+      }
+    }
+
     const options = {
       key: merchantSettings.razorpayKey, // Configurable merchant Key ID
       amount: Math.round(totalPrice * 100), // convert rupees to paise
@@ -615,8 +764,9 @@ export default function App() {
       name: merchantSettings.shopName,
       description: "Premium Poultry Pickup Voucher",
       image: "https://cdn-icons-png.flaticon.com/512/3233/3233515.png",
+      order_id: orderId, // Set to orderId if fetched, otherwise null
       handler: function (response) {
-        completeOrder(response.razorpay_payment_id, "PAID (Online via Razorpay)");
+        completeOrder(response.razorpay_payment_id || response.razorpay_order_id || "PAY_SUCCESS", "PAID (Online via Razorpay)");
       },
       prefill: {
         name: customerInfo.name,
@@ -1476,8 +1626,23 @@ export default function App() {
                         }
                         className="w-full px-4 py-2.5 bg-muted border border-border rounded-xl text-sm font-mono focus:outline-none focus:border-primary transition-colors"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-foreground/60 uppercase tracking-wide mb-1.5">
+                        Razorpay Merchant Key Secret
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="Enter Key Secret..."
+                        value={merchantSettings.razorpaySecret || ""}
+                        onChange={(e) =>
+                          setMerchantSettings((prev) => ({ ...prev, razorpaySecret: e.target.value }))
+                        }
+                        className="w-full px-4 py-2.5 bg-muted border border-border rounded-xl text-sm font-mono focus:outline-none focus:border-primary transition-colors"
+                      />
                       <span className="text-[10px] text-foreground/50 block font-semibold mt-1">
-                        Pasting your live key (`rzp_live_...`) connects checkout transactions directly to your bank account securely.
+                        Pasting your Key ID & Key Secret enables secure, live payment checkouts. Leave the secret blank to run in mock test mode.
                       </span>
                     </div>
                   </div>
